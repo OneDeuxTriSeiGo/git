@@ -310,6 +310,26 @@ test_expect_success '"add" -B/--detach mutually exclusive' '
 	test_must_fail git worktree add -B poodle --detach bamboo main
 '
 
+test_expect_success '"add" --orphan/-b mutually exclusive' '
+	test_must_fail git worktree add --orphan poodle -b poodle bamboo main
+'
+
+test_expect_success '"add" --orphan/-B mutually exclusive' '
+	test_must_fail git worktree add --orphan poodle -B poodle bamboo main
+'
+
+test_expect_success '"add" --orphan/--detach mutually exclusive' '
+	test_must_fail git worktree add --orphan poodle --detach bamboo main
+'
+
+test_expect_success '"add" --orphan/--no-checkout mutually exclusive' '
+	test_must_fail git worktree add --orphan poodle --no-checkout bamboo main
+'
+
+test_expect_success '"add" -B/--detach mutually exclusive' '
+	test_must_fail git worktree add -B poodle --detach bamboo main
+'
+
 test_expect_success '"add -B" fails if the branch is checked out' '
 	git rev-parse newmain >before &&
 	test_must_fail git worktree add -B newmain bamboo main &&
@@ -328,6 +348,40 @@ test_expect_success 'add -B' '
 test_expect_success 'add --quiet' '
 	git worktree add --quiet another-worktree main 2>actual &&
 	test_must_be_empty actual
+'
+
+test_expect_success '"add --orphan"' '
+	git worktree add --orphan neworphan orphandir main &&
+	git -C orphandir symbolic-ref HEAD >actual &&
+	echo refs/heads/neworphan >expected &&
+	test_cmp expected actual &&
+	(
+		cd orphandir &&
+		git diff main
+	)
+'
+
+test_expect_success '"add --orphan" fails if the branch already exists' '
+	git worktree add -b existingbranch orphandir2 main &&
+	test_must_fail git worktree add --orphan existingbranch orphandir3 main &&
+	[ ! -d orphandir3 ]
+'
+
+test_expect_success '"add --orphan" fails if the commit-ish doesnt exist' '
+	test_must_fail git worktree add --orphan badcommitish orphandir4 eee2222 &&
+	[ ! -d orphandir4 ]
+'
+
+test_expect_success '"add --orphan" with empty repository' '
+	(
+		mkdir emptyorphanrepo &&
+		cd emptyorphanrepo &&
+		GIT_DIR=".git" git init --bare &&
+		git worktree add --orphan newbranch worktreedir &&
+		git -C worktreedir symbolic-ref HEAD >actual &&
+		echo refs/heads/newbranch >expected &&
+		test_cmp expected actual
+	)
 '
 
 test_expect_success 'local clone from linked checkout' '
