@@ -17,7 +17,7 @@
 
 #define BUILTIN_WORKTREE_ADD_USAGE                                                        \
 	N_("git worktree add [-f] [--detach] [--checkout] [--lock [--reason <string>]]\n" \
-	   "                 [[-b | -B] <new-branch>] <path> [<commit-ish>]")
+	   "                 [[-b | -B | --orphan] <new-branch>] <path> [<commit-ish>]")
 #define BUILTIN_WORKTREE_LIST_USAGE \
 	N_("git worktree list [-v | --porcelain [-z]]")
 #define BUILTIN_WORKTREE_LOCK_USAGE \
@@ -90,6 +90,8 @@ struct add_opts {
 	int detach;
 	int quiet;
 	int checkout;
+	int implicit;
+	const char *orphan_branch;
 	const char *keep_locked;
 };
 
@@ -357,9 +359,11 @@ static int checkout_worktree(const struct add_opts *opts,
 {
 	struct child_process cp = CHILD_PROCESS_INIT;
 	cp.git_cmd = 1;
-	strvec_pushl(&cp.args, "reset", "--hard", "--no-recurse-submodules", NULL);
+	strvec_pushl(&cp.args, "checkout", "--no-recurse-submodules", NULL);
 	if (opts->quiet)
 		strvec_push(&cp.args, "--quiet");
+	if (opts->orphan_branch)
+		strvec_pushl(&cp.args, "--orphan", opts->orphan_branch, NULL);
 	strvec_pushv(&cp.env, child_env->v);
 	return run_command(&cp);
 }
@@ -393,7 +397,8 @@ static int add_worktree(const char *path, const char *refname,
 			die_if_checked_out(symref.buf, 0);
 	}
 	commit = lookup_commit_reference_by_name(refname);
-	if (!commit)
+
+	if (!commit && !opts->implicit)
 		die(_("invalid reference: %s"), refname);
 
 	name = worktree_basename(path, &len);
@@ -482,10 +487,10 @@ static int add_worktree(const char *path, const char *refname,
 	strvec_pushf(&child_env, "%s=%s", GIT_WORK_TREE_ENVIRONMENT, path);
 	cp.git_cmd = 1;
 
-	if (!is_branch)
+	if (!is_branch && commit) {
 		strvec_pushl(&cp.args, "update-ref", "HEAD",
 			     oid_to_hex(&commit->object.oid), NULL);
-	else {
+	} else {
 		strvec_pushl(&cp.args, "symbolic-ref", "HEAD",
 			     symref.buf, NULL);
 		if (opts->quiet)
@@ -516,7 +521,7 @@ done:
 	 * Hook failure does not warrant worktree deletion, so run hook after
 	 * is_junk is cleared, but do return appropriate code when hook fails.
 	 */
-	if (!ret && opts->checkout) {
+	if (!ret && opts->checkout && !opts->orphan_branch) {
 		struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
 
 		strvec_pushl(&opt.env, "GIT_DIR", "GIT_WORK_TREE", NULL);
@@ -608,33 +613,52 @@ static int add(int ac, const char **av, const char *prefix)
 	const char *opt_track = NULL;
 	const char *lock_reason = NULL;
 	int keep_locked = 0;
+
 	struct option options[] = {
-		OPT__FORCE(&opts.force,
-			   N_("checkout <branch> even if already checked out in other worktree"),
-			   PARSE_OPT_NOCOMPLETE),
+		OPT__FORCE(
+			&opts.force,
+			N_("checkout <branch> even if already checked out in other worktree"),
+			PARSE_OPT_NOCOMPLETE),
 		OPT_STRING('b', NULL, &new_branch, N_("branch"),
 			   N_("create a new branch")),
 		OPT_STRING('B', NULL, &new_branch_force, N_("branch"),
 			   N_("create or reset a branch")),
-		OPT_BOOL('d', "detach", &opts.detach, N_("detach HEAD at named commit")),
-		OPT_BOOL(0, "checkout", &opts.checkout, N_("populate the new working tree")),
-		OPT_BOOL(0, "lock", &keep_locked, N_("keep the new working tree locked")),
+		OPT_STRING(0, "orphan", &opts.orphan_branch, N_("branch"),
+			   N_("create a new unparented branch")),
+		OPT_BOOL('d', "detach", &opts.detach,
+			 N_("detach HEAD at named commit")),
+		OPT_BOOL(0, "checkout", &opts.checkout,
+			 N_("populate the new working tree")),
+		OPT_BOOL(0, "lock", &keep_locked,
+			 N_("keep the new working tree locked")),
 		OPT_STRING(0, "reason", &lock_reason, N_("string"),
 			   N_("reason for locking")),
 		OPT__QUIET(&opts.quiet, N_("suppress progress reporting")),
 		OPT_PASSTHRU(0, "track", &opt_track, NULL,
 			     N_("set up tracking mode (see git-branch(1))"),
 			     PARSE_OPT_NOARG | PARSE_OPT_OPTARG),
-		OPT_BOOL(0, "guess-remote", &guess_remote,
-			 N_("try to match the new branch name with a remote-tracking branch")),
+		OPT_BOOL(
+			0, "guess-remote", &guess_remote,
+			N_("try to match the new branch name with a remote-tracking branch")),
 		OPT_END()
 	};
 
 	memset(&opts, 0, sizeof(opts));
 	opts.checkout = 1;
 	ac = parse_options(ac, av, prefix, options, git_worktree_add_usage, 0);
-	if (!!opts.detach + !!new_branch + !!new_branch_force > 1)
-		die(_("options '%s', '%s', and '%s' cannot be used together"), "-b", "-B", "--detach");
+
+	opts.implicit = ac < 2;
+
+	if (!!opts.detach + !!new_branch + !!new_branch_force +
+		    !!opts.orphan_branch >
+	    1)
+		die(_("options '%s', '%s', '%s', and '%s' cannot be used together"),
+		    "-b", "-B", "--orphan", "--detach");
+	if (opts.orphan_branch && opt_track)
+		die(_("'%s' cannot be used with '%s'"), "--orphan", "--track");
+	if (opts.orphan_branch && !opts.checkout)
+		die(_("'%s' cannot be used with '%s'"), "--orphan",
+		    "--no-checkout");
 	if (lock_reason && !keep_locked)
 		die(_("the option '%s' requires '%s'"), "--reason", "--lock");
 	if (lock_reason)
@@ -646,11 +670,16 @@ static int add(int ac, const char **av, const char *prefix)
 		usage_with_options(git_worktree_add_usage, options);
 
 	path = prefix_filename(prefix, av[0]);
-	branch = ac < 2 ? "HEAD" : av[1];
+	branch = opts.implicit ? "HEAD" : av[1];
 
 	if (!strcmp(branch, "-"))
 		branch = "@{-1}";
 
+	/*
+	 * From here on, new_branch will contain the branch to be checked out,
+	 * and new_branch_force and opts.orphan_branch will tell us which one of
+	 * -b/-B/--orphan is being used.
+	 */
 	if (new_branch_force) {
 		struct strbuf symref = STRBUF_INIT;
 
@@ -661,6 +690,11 @@ static int add(int ac, const char **av, const char *prefix)
 		    ref_exists(symref.buf))
 			die_if_checked_out(symref.buf, 0);
 		strbuf_release(&symref);
+	}
+
+	if (opts.orphan_branch) {
+		new_branch = opts.orphan_branch;
+		opts.force = 1;
 	}
 
 	if (ac < 2 && !new_branch && !opts.detach) {
@@ -686,7 +720,7 @@ static int add(int ac, const char **av, const char *prefix)
 	if (!opts.quiet)
 		print_preparing_worktree_line(opts.detach, branch, new_branch, !!new_branch_force);
 
-	if (new_branch) {
+	if (new_branch && !opts.orphan_branch) {
 		struct child_process cp = CHILD_PROCESS_INIT;
 		cp.git_cmd = 1;
 		strvec_push(&cp.args, "branch");
