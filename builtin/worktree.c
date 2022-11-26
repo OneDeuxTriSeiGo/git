@@ -744,6 +744,14 @@ static int add(int ac, const char **av, const char *prefix)
 		 * If `branch` does not reference a valid commit, a new
 		 * worktree (and/or branch) cannot be created based off of it.
 		 */
+		advise_if_enabled(ADVICE_WORKTREE_ADD_ORPHAN,
+			"If you meant to create a worktree containing a new orphan branch\n"
+			"(branch with no commits) for this repository, e.g. '%s',\n"
+			"you can do so using the --orphan option:\n"
+			"\n"
+			"	git worktree add --orphan %s %s\n"
+			"\n",
+			 new_branch, new_branch, path);
 		die(_("invalid reference: %s"), branch);
 	} else if (new_branch) {
 		struct child_process cp = CHILD_PROCESS_INIT;

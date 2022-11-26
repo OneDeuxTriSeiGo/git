@@ -376,6 +376,22 @@ test_expect_success '"add" worktree with orphan branch, lock, and reason' '
 	test_cmp expect .git/worktrees/orphan-with-lock-reason/locked
 '
 
+# Helper function to test hints for using --orphan in an empty repo.
+test_wt_add_empty_repo_orphan_hint() {
+	local context="$1" &&
+	local opts="${@:2}" &&
+	test_expect_success "'worktree add' show orphan hint in empty repo w/ $context" '
+		test_when_finished "rm -rf empty_repo" &&
+		GIT_DIR="empty_repo" git init --bare &&
+		test_must_fail git -C empty_repo worktree add $opts 2> actual &&
+		grep "hint: If you meant to create a worktree containing a new orphan branch" actual
+	'
+}
+
+test_wt_add_empty_repo_orphan_hint 'DWIM' foobar/
+test_wt_add_empty_repo_orphan_hint '-b' -b foobar_branch foobar/
+test_wt_add_empty_repo_orphan_hint '-B' -B foobar_branch foobar/
+
 test_expect_success 'local clone from linked checkout' '
 	git clone --local here here-clone &&
 	( cd here-clone && git fsck )
