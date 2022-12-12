@@ -298,17 +298,39 @@ test_expect_success '"add" no auto-vivify with --detach and <branch> omitted' '
 	test_must_fail git -C mish/mash symbolic-ref HEAD
 '
 
-test_expect_success '"add" -b/-B mutually exclusive' '
-	test_must_fail git worktree add -b poodle -B poodle bamboo main
-'
+# Saves parameter sequence/array as a string so they can be safely stored in a
+# variable and restored with `eval "set -- $arr"`. Sourced from
+# https://stackoverflow.com/a/27503158/15064705
+save_param_arr () {
+	local i
+	for i;
+	do
+		# For each argument:
+		# 1. Append "\n" after each entry
+		# 2. Convert "'" into "'\''"
+		# 3. Prepend "'" before each entry
+		# 4. Append " \" after each entry
+		printf "%s\\n" "$i" | sed "
+			s/'/'\\\\''/g
+			1s/^/'/
+			\$s/\$/' \\\\/
+		"
+	done
+	echo " "
+}
 
-test_expect_success '"add" -b/--detach mutually exclusive' '
-	test_must_fail git worktree add -b poodle --detach bamboo main
-'
+# Helper function to test mutually exclusive options.
+test_wt_add_excl () {
+	local arr=$(save_param_arr "$@")
+	test_expect_success "'worktree add' with $* has mutually exclusive options" '
+		eval "set -- $arr" &&
+		test_must_fail git worktree add "$@"
+	'
+}
 
-test_expect_success '"add" -B/--detach mutually exclusive' '
-	test_must_fail git worktree add -B poodle --detach bamboo main
-'
+test_wt_add_excl -b poodle -B poodle bamboo main
+test_wt_add_excl -b poodle --detach bamboo main
+test_wt_add_excl -B poodle --detach bamboo main
 
 test_expect_success '"add -B" fails if the branch is checked out' '
 	git rev-parse newmain >before &&
